@@ -19,16 +19,10 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/containernetworking/cni/pkg/invoke"
 	"github.com/containernetworking/cni/pkg/skel"
@@ -38,15 +32,9 @@ import (
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 )
 
-const (
-	defaultSubnetFile = "/tmp/subnet.env"
-	defaultDataDir    = "/tmp"
-)
-
 type NetConf struct {
 	types.NetConf
 
-	SubnetFile string                 `json:"subnetFile"`
 	DataDir    string                 `json:"dataDir"`
 	Delegate   map[string]interface{} `json:"delegate"`
 }
@@ -58,98 +46,12 @@ type subnetEnv struct {
 	ipmasq *bool
 }
 
-func (se *subnetEnv) missing() string {
-	m := []string{}
-
-	if se.nw == nil {
-		m = append(m, "FLANNEL_NETWORK")
-	}
-	if se.sn == nil {
-		m = append(m, "FLANNEL_SUBNET")
-	}
-	if se.mtu == nil {
-		m = append(m, "FLANNEL_MTU")
-	}
-	if se.ipmasq == nil {
-		m = append(m, "FLANNEL_IPMASQ")
-	}
-	return strings.Join(m, ", ")
-}
-
-func loadFlannelNetConf(bytes []byte) (*NetConf, error) {
-	n := &NetConf{
-		SubnetFile: defaultSubnetFile,
-		DataDir:    defaultDataDir,
-	}
+func loadMesosNetConf(bytes []byte) (*NetConf, error) {
+	n := &NetConf{}
 	if err := json.Unmarshal(bytes, n); err != nil {
 		return nil, fmt.Errorf("failed to load netconf: %v", err)
 	}
 	return n, nil
-}
-
-func loadFlannelSubnetEnv(fn string) (*subnetEnv, error) {
-	f, err := os.Open(fn)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	se := &subnetEnv{}
-
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		parts := strings.SplitN(s.Text(), "=", 2)
-		switch parts[0] {
-		case "FLANNEL_NETWORK":
-			_, se.nw, err = net.ParseCIDR(parts[1])
-			if err != nil {
-				return nil, err
-			}
-
-		case "FLANNEL_SUBNET":
-			_, se.sn, err = net.ParseCIDR(parts[1])
-			if err != nil {
-				return nil, err
-			}
-
-		case "FLANNEL_MTU":
-			mtu, err := strconv.ParseUint(parts[1], 10, 32)
-			if err != nil {
-				return nil, err
-			}
-			se.mtu = new(uint)
-			*se.mtu = uint(mtu)
-
-		case "FLANNEL_IPMASQ":
-			ipmasq := parts[1] == "true"
-			se.ipmasq = &ipmasq
-		}
-	}
-	if err := s.Err(); err != nil {
-		return nil, err
-	}
-
-	if m := se.missing(); m != "" {
-		return nil, fmt.Errorf("%v is missing %v", fn, m)
-	}
-
-	return se, nil
-}
-
-func saveScratchNetConf(containerID, dataDir string, netconf []byte) error {
-	if err := os.MkdirAll(dataDir, 0700); err != nil {
-		return err
-	}
-	path := filepath.Join(dataDir, containerID)
-	return ioutil.WriteFile(path, netconf, 0600)
-}
-
-func consumeScratchNetConf(containerID, dataDir string) ([]byte, error) {
-	path := filepath.Join(dataDir, containerID)
-	// Ignore errors when removing - Per spec safe to continue during DEL
-	defer os.Remove(path)
-
-	return ioutil.ReadFile(path)
 }
 
 func delegateAdd(cid, dataDir string, netconf map[string]interface{}) error {
@@ -158,17 +60,26 @@ func delegateAdd(cid, dataDir string, netconf map[string]interface{}) error {
 		return fmt.Errorf("error serializing delegate netconf: %v", err)
 	}
 
-	// save the rendered netconf for cmdDel
-	if err = saveScratchNetConf(cid, dataDir, netconfBytes); err != nil {
-		return err
-	}
-
 	result, err := invoke.DelegateAdd(context.TODO(), netconf["type"].(string), netconfBytes, nil)
 	if err != nil {
 		return err
 	}
 
 	return result.Print()
+}
+
+func delegateDel(cid, dataDir string, netconf map[string]interface{}) error {
+	netconfBytes, err := json.Marshal(netconf)
+	if err != nil {
+		return fmt.Errorf("error serializing delegate netconf: %v", err)
+	}
+
+	err = invoke.DelegateDel(context.TODO(), netconf["type"].(string), netconfBytes, nil)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func hasKey(m map[string]interface{}, k string) bool {
@@ -182,7 +93,7 @@ func isString(i interface{}) bool {
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
-	n, err := loadFlannelNetConf(args.StdinData)
+	n, err := loadMesosNetConf(args.StdinData)
 	if err != nil {
 		return err
 	}
@@ -202,7 +113,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 }
 
 func cmdDel(args *skel.CmdArgs) error {
-	nc, err := loadFlannelNetConf(args.StdinData)
+	nc, err := loadMesosNetConf(args.StdinData)
 	if err != nil {
 		return err
 	}
@@ -222,7 +133,7 @@ func cmdCheck(args *skel.CmdArgs) error {
 func doCmdAdd(args *skel.CmdArgs, n *NetConf) error {
 
 	//f1 edit
-	jsonStr := `{"args": { "cni": { "ips": ["192.168.122.177"] } } }`
+	jsonStr := `{"args": { "cni": { "ips": ["192.168.122.176"] } } }`
 	cniMap := make(map[string]interface{})
 	err := json.Unmarshal([]byte(jsonStr), &cniMap)
 	if err != nil {
@@ -240,20 +151,19 @@ func doCmdAdd(args *skel.CmdArgs, n *NetConf) error {
 }
 
 func doCmdDel(args *skel.CmdArgs, n *NetConf) error {
-     netconfBytes, err := consumeScratchNetConf(args.ContainerID, n.DataDir)
-     if err != nil {
-           if os.IsNotExist(err) {
-                 // Per spec should ignore error if resources are missing / already removed
-                 return nil
-           }
-           return err
-     }
 
-     nc := &types.NetConf{}
-     if err = json.Unmarshal(netconfBytes, nc); err != nil {
-           return fmt.Errorf("failed to parse netconf: %v", err)
-     }
+	//f1 edit
+	jsonStr := `{"args": { "cni": { "ips": ["192.168.122.176"] } } }`
+	cniMap := make(map[string]interface{})
+	err := json.Unmarshal([]byte(jsonStr), &cniMap)
+	if err != nil {
+		return err
+	}
+	n.Delegate["args"]=cniMap["args"]
+        n.Delegate["name"] = n.Name
 
-     return invoke.DelegateDel(context.TODO(), nc.Type, netconfBytes, nil)
+
+     //return invoke.DelegateDel(context.TODO(), nc.Type, netconfBytes, nil)
+     return delegateDel(args.ContainerID, n.DataDir, n.Delegate)
 }
 
