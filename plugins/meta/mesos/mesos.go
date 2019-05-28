@@ -12,9 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// This is a "meta-plugin". It reads in its own netconf, combines it with
-// the data from flannel generated subnet file and then invokes a plugin
-// like bridge or ipvlan to do the real work.
+// This is a "meta-plugin". It reads in its own netconf, and then invokes 
+// a plugin like bridge or ipvlan to do the real work.
 
 package main
 
@@ -105,7 +104,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 			return fmt.Errorf("'delegate' dictionary, if present, must have (string) 'type' field")
 		}
 		if hasKey(n.Delegate, "name") {
-			return fmt.Errorf("'delegate' dictionary must not have 'name' field, it'll be set by flannel")
+			return fmt.Errorf("'delegate' dictionary must not have 'name' field")
 		}
 	}
 
@@ -122,7 +121,7 @@ func cmdDel(args *skel.CmdArgs) error {
 }
 
 func main() {
-	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, bv.BuildString("flannel"))
+	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, bv.BuildString("mesos"))
 }
 
 func cmdCheck(args *skel.CmdArgs) error {
