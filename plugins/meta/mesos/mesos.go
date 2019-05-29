@@ -108,33 +108,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 		}
 	}
 
-	return doCmdAdd(args, n)
-}
-
-func cmdDel(args *skel.CmdArgs) error {
-	nc, err := loadMesosNetConf(args.StdinData)
-	if err != nil {
-		return err
-	}
-
-	return doCmdDel(args, nc)
-}
-
-func main() {
-	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, bv.BuildString("mesos"))
-}
-
-func cmdCheck(args *skel.CmdArgs) error {
-	// TODO: implement
-	return nil
-}
-
-func doCmdAdd(args *skel.CmdArgs, n *NetConf) error {
-
 	//f1 edit
 	jsonStr := `{"args": { "cni": { "ips": ["192.168.122.176"] } } }`
 	cniMap := make(map[string]interface{})
-	err := json.Unmarshal([]byte(jsonStr), &cniMap)
+	err = json.Unmarshal([]byte(jsonStr), &cniMap)
 	if err != nil {
 		return err
 	}
@@ -149,20 +126,32 @@ func doCmdAdd(args *skel.CmdArgs, n *NetConf) error {
         return delegateAdd(args.ContainerID, n.DataDir, n.Delegate)
 }
 
-func doCmdDel(args *skel.CmdArgs, n *NetConf) error {
+func cmdDel(args *skel.CmdArgs) error {
+	nc, err := loadMesosNetConf(args.StdinData)
+	if err != nil {
+		return err
+	}
+
 
 	//f1 edit
 	jsonStr := `{"args": { "cni": { "ips": ["192.168.122.176"] } } }`
 	cniMap := make(map[string]interface{})
-	err := json.Unmarshal([]byte(jsonStr), &cniMap)
+	err = json.Unmarshal([]byte(jsonStr), &cniMap)
 	if err != nil {
 		return err
 	}
-	n.Delegate["args"]=cniMap["args"]
-        n.Delegate["name"] = n.Name
+	nc.Delegate["args"]=cniMap["args"]
+        nc.Delegate["name"] = nc.Name
 
 
-     //return invoke.DelegateDel(context.TODO(), nc.Type, netconfBytes, nil)
-     return delegateDel(args.ContainerID, n.DataDir, n.Delegate)
+     return delegateDel(args.ContainerID, nc.DataDir, nc.Delegate)
 }
 
+func main() {
+	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, bv.BuildString("mesos"))
+}
+
+func cmdCheck(args *skel.CmdArgs) error {
+	// TODO: implement
+	return nil
+}
