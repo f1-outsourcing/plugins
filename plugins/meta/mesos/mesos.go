@@ -34,7 +34,6 @@ import (
 type NetConf struct {
 	types.NetConf
 
-	DataDir    string                 `json:"dataDir"`
 	Delegate   map[string]interface{} `json:"delegate"`
 }
 
@@ -123,11 +122,11 @@ func cmdAdd(args *skel.CmdArgs) error {
 	
         n.Delegate["name"] = n.Name
 
-        return delegateAdd(args.ContainerID, n.DataDir, n.Delegate)
+        return delegateAdd(args.ContainerID, "", n.Delegate)
 }
 
 func cmdDel(args *skel.CmdArgs) error {
-	nc, err := loadMesosNetConf(args.StdinData)
+	n, err := loadMesosNetConf(args.StdinData)
 	if err != nil {
 		return err
 	}
@@ -140,11 +139,11 @@ func cmdDel(args *skel.CmdArgs) error {
 	if err != nil {
 		return err
 	}
-	nc.Delegate["args"]=cniMap["args"]
-        nc.Delegate["name"] = nc.Name
+	n.Delegate["args"] = cniMap["args"]
+        n.Delegate["name"] = n.Name
 
 
-     return delegateDel(args.ContainerID, nc.DataDir, nc.Delegate)
+     return delegateDel(args.ContainerID, "", n.Delegate)
 }
 
 func main() {
