@@ -46,6 +46,8 @@ type NetConf struct {
 	Master string `json:"master"`
 	Mode   string `json:"mode"`
 	MTU    int    `json:"mtu"`
+	MAC    string `json:"mac"`
+	HostRouteIf string `json:"hostrouteif"`
 }
 
 func init() {
@@ -218,6 +220,30 @@ func cmdAdd(args *skel.CmdArgs) error {
 		ipc.Interface = current.Int(0)
 	}
 	
+	if n.MAC != "" {
+		err = netns.Do(func(_ ns.NetNS) error {
+			macIf, err := netlink.LinkByName(args.IfName)
+			if err != nil {
+				return fmt.Errorf("failed to lookup new macvtapdevice %q: %v", args.IfName, err)
+			}
+
+			mac, err := net.ParseMAC(n.MAC)
+			if err != nil {
+				return fmt.Errorf("failed to read provided MAC address %q: %v", n.MAC, err)
+			}
+
+			if err = netlink.LinkSetHardwareAddr(macIf, mac); err != nil {
+				return fmt.Errorf("failed to add hardware addr to %q: %v", args.IfName, err)
+			}
+			return nil
+		})
+
+		if err != nil {
+			return err
+		}
+
+	}
+
 	err = netns.Do(func(_ ns.NetNS) error {
 		if err := ipam.ConfigureIface(args.IfName, result); err != nil {
 			return err
@@ -241,6 +267,33 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
+	//f1 edit
+	//add route on host to macvtap
+	if n.HostRouteIf != "" {
+
+		hostlink, err := netlink.LinkByName(n.HostRouteIf)
+		if err != nil {
+			return err
+		}
+	
+		//bring up interface
+		if err := netlink.LinkSetUp(hostlink); err != nil {
+			return err
+       		}
+
+		//only first ip to route???
+       		hostdst := &net.IPNet{
+			IP:   result.IPs[0].Address.IP.To4(),
+			Mask: net.CIDRMask(32, 32),
+       		}
+
+		hostroute := netlink.Route{LinkIndex: hostlink.Attrs().Index, Dst: hostdst}
+		if err := netlink.RouteAdd(&hostroute); err != nil {
+			return err
+        	}
+	}
+
+
 	result.DNS = n.DNS
 
 	return types.PrintResult(result, cniVersion)
@@ -257,6 +310,8 @@ func cmdDel(args *skel.CmdArgs) error {
 		return err
 	}
 
+	dstip := net.IPv4(192, 168, 122, 175)
+
 	if args.Netns == "" {
 		return nil
 	}
@@ -264,6 +319,14 @@ func cmdDel(args *skel.CmdArgs) error {
 	// There is a netns so try to clean up. Delete can be called multiple times
 	// so don't return an error if the device is already removed.
 	err = ns.WithNetNSPath(args.Netns, func(_ ns.NetNS) error {
+		//f1 edit
+		//get the current ip
+		nslink, err := netlink.LinkByName(args.IfName)
+		if err != nil { return nil }
+		addrs, err := netlink.AddrList(nslink, netlink.FAMILY_V4)
+		if err != nil { return nil }
+		//global var??
+		dstip = addrs[0].IP
 
 		if err := ip.DelLinkByName(args.IfName); err != nil {
 			if err != ip.ErrLinkNotFound {
@@ -272,6 +335,22 @@ func cmdDel(args *skel.CmdArgs) error {
 		}
 		return nil
 	})
+
+	//f1 edit
+	//delete route on host to macvtap
+	if n.HostRouteIf != "" {
+		hostdst := &net.IPNet{
+			IP:   dstip,
+			Mask: net.CIDRMask(32, 32),
+		}
+
+		hostroute := netlink.Route{Dst: hostdst}
+
+		if err := netlink.RouteDel(&hostroute); err != nil {
+			return nil
+		}
+
+	}
 
 	return err
 }
@@ -402,3 +481,15 @@ func validateCniContainerInterface(intf current.Interface, parentIndex int, mode
 
 	return nil
 }
+
+
+func renameLink(curName, newName string) error {
+	link, err := netlink.LinkByName(curName)
+	if err != nil {
+		return err
+	}
+
+	return netlink.LinkSetName(link, newName)
+}
+
+
