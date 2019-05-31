@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 
 	"github.com/containernetworking/cni/pkg/invoke"
 	"github.com/containernetworking/cni/pkg/skel"
@@ -35,13 +34,6 @@ type NetConf struct {
 	types.NetConf
 
 	Delegate   map[string]interface{} `json:"delegate"`
-}
-
-type subnetEnv struct {
-	nw     *net.IPNet
-	sn     *net.IPNet
-	mtu    *uint
-	ipmasq *bool
 }
 
 func loadMesosNetConf(bytes []byte) (*NetConf, error) {
