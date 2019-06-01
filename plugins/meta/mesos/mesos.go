@@ -22,26 +22,53 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-
+	
 	"github.com/containernetworking/cni/pkg/invoke"
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/version"
 
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
+	"io/ioutil"
 )
 
 type NetConf struct {
 	types.NetConf
-
 	Delegate   map[string]interface{} `json:"delegate"`
 }
 
-type subnetEnv struct {
-	nw     *net.IPNet
-	sn     *net.IPNet
-	mtu    *uint
-	ipmasq *bool
+type CniArgs struct {
+	Args struct {
+		Cni IPAMArgs `json:"cni"`
+		//Cni struct {
+			//Ips []string `json:"ips"`
+			//Ips []net.IP `json:"ips"`
+		//} `json:"cni"`
+	} `json:"args"`
+}
+
+type IPAMArgs struct {
+	Ips []net.IP `json:"ips"`
+}
+
+type MesosArgs struct {
+	Args struct {
+		OrgApacheMesos struct {
+			NetworkInfo struct {
+				IpAddrs []struct {
+					Prot string `json:"protocol"`
+					
+				} `json:"ip_addresses"`
+				Labels struct {
+					Labels []struct {
+						Key string `json:"key"`
+						Value string `json:"value"`
+					}  `json:"labels"`
+				}  `json:"labels"`
+				Name string `json:"name"`
+			} `json:"network_info"`
+		} `json:"org.apache.mesos"`
+	} `json:"args"`
 }
 
 func loadMesosNetConf(bytes []byte) (*NetConf, error) {
@@ -50,6 +77,15 @@ func loadMesosNetConf(bytes []byte) (*NetConf, error) {
 		return nil, fmt.Errorf("failed to load netconf: %v", err)
 	}
 	return n, nil
+}
+
+func loadMesosArgsConf(bytes []byte) (*MesosArgs, error) {
+	m := &MesosArgs{}
+	if err := json.Unmarshal(bytes, m); err != nil {
+		return nil, fmt.Errorf("failed to load args: %v", err)
+	}
+
+	return m,nil
 }
 
 func delegateAdd(cid, dataDir string, netconf map[string]interface{}) error {
@@ -96,6 +132,15 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
+        cniargs := CniArgs{}
+
+	//getting the mesos args from stdin
+	m, err := loadMesosArgsConf(args.StdinData)
+	if err != nil {
+		return err
+	}
+	bla, err := json.Marshal(m)
+	
 	if n.Delegate == nil {
 		n.Delegate = make(map[string]interface{})
 	} else {
@@ -105,16 +150,29 @@ func cmdAdd(args *skel.CmdArgs) error {
 		if hasKey(n.Delegate, "name") {
 			return fmt.Errorf("'delegate' dictionary must not have 'name' field")
 		}
+		if hasKey(n.Delegate, "args") {
+			//f1 edit fix marshall unmarshall 
+			//read the already existing args cni section
+			bla, err = json.Marshal(n.Delegate)
+			if err != nil { return fmt.Errorf("error serializing delegate") }
+        		if err := json.Unmarshal(bla, &cniargs); err != nil {
+                		return fmt.Errorf("'delegate' failed to load args: %v", err)
+        		}
+		}
 	}
 
-	//f1 edit
-	jsonStr := `{"args": { "cni": { "ips": ["192.168.122.176"] } } }`
-	cniMap := make(map[string]interface{})
-	err = json.Unmarshal([]byte(jsonStr), &cniMap)
-	if err != nil {
-		return err
+	//read the values of m and put them in cniargs
+	items := m.Args.OrgApacheMesos.NetworkInfo.Labels.Labels
+	for _, item := range items {
+		if item.Key == "ips" {
+			ip := net.ParseIP(item.Value)
+			cniargs.Args.Cni.Ips=append(cniargs.Args.Cni.Ips, ip )
+		}
 	}
-	n.Delegate["args"]=cniMap["args"]
+
+	ipamargs := IPAMArgs{}
+	ipamargs = cniargs.Args.Cni
+	n.Delegate["args"].(map[string]interface{})["cni"]=ipamargs
 
         if n.CNIVersion != "" {
                 n.Delegate["cniVersion"] = n.CNIVersion
