@@ -190,7 +190,7 @@ func cmdDel(args *skel.CmdArgs) error {
 	}
 
 
-	//f1 edit
+	//we still need to have this configuration parsed?
 	jsonStr := `{"args": { "cni": { "ips": ["192.168.122.176"] } } }`
 	cniMap := make(map[string]interface{})
 	err = json.Unmarshal([]byte(jsonStr), &cniMap)
