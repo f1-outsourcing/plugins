@@ -185,10 +185,6 @@ func cmdAdd(args *skel.CmdArgs) error {
 	
         n.Delegate["name"] = n.Name
 
-	//log debug
-	strout, err := json.Marshal(m)
-	ioutil.WriteFile("/tmp/debug", strout, 0644)
-
         return delegateAdd(args.ContainerID, "", n.Delegate)
 }
 
