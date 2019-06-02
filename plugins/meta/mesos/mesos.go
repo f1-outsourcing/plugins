@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 	
 	"github.com/containernetworking/cni/pkg/invoke"
 	"github.com/containernetworking/cni/pkg/skel"
@@ -164,9 +165,13 @@ func cmdAdd(args *skel.CmdArgs) error {
 	//read the values of m and put them in cniargs
 	items := m.Args.OrgApacheMesos.NetworkInfo.Labels.Labels
 	for _, item := range items {
-		if item.Key == "ips" {
-			ip := net.ParseIP(item.Value)
-			cniargs.Args.Cni.Ips=append(cniargs.Args.Cni.Ips, ip )
+		if item.Key == "CNI_ARGS" {
+			// add loop for multiple args seperated by ,
+			s := strings.Split(item.Value,"=")
+			if s[0] == "IP" {
+				ip := net.ParseIP(s[1])
+				cniargs.Args.Cni.Ips=append(cniargs.Args.Cni.Ips, ip )
+			}
 		}
 	}
 
@@ -179,6 +184,10 @@ func cmdAdd(args *skel.CmdArgs) error {
         }
 	
         n.Delegate["name"] = n.Name
+
+	//log debug
+	strout, err := json.Marshal(m)
+	ioutil.WriteFile("/tmp/debug", strout, 0644)
 
         return delegateAdd(args.ContainerID, "", n.Delegate)
 }
