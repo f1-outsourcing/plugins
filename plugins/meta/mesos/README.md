@@ -21,11 +21,15 @@ When we launch this task via marathon,
   "acceptedResourceRoles": ["*"],
   "constraints": [["hostname","CLUSTER","m03.local"]],
   "backoffSeconds": 10,
-  "ipAddress": { "networkName": "test-delegate", "labels": {"CNI_ARGS": "IP=192.168.122.176"} },
+  "networks": [ { "mode": "container", "name": "test-delegate","labels": {"CNI_ARGS": "IP=192.168.122.176"} } ],
   "env": {"CNI_ARGS": "IP=192.168.122.172"},
   "labels": {"CNI_ARGS": "IP=192.168.122.174"}
 }
 ```
+
+One can also use this configuration syntax:
+"ipAddress": { "networkName": "test-delegate", "labels": {"CNI_ARGS": "IP=192.168.122.176"} },
+
 
 Apache mesos injects this runtime into cni network configuration. As you can see only the entry of CNI_ARGS that is in the ipAddress section is available.
 Standard cni plugins do not use this section of the configuration.
