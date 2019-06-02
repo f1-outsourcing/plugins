@@ -30,7 +30,6 @@ import (
 	"github.com/containernetworking/cni/pkg/version"
 
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
-	"io/ioutil"
 )
 
 type NetConf struct {
