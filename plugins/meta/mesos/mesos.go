@@ -176,7 +176,13 @@ func cmdAdd(args *skel.CmdArgs) error {
 
 	ipamargs := IPAMArgs{}
 	ipamargs = cniargs.Args.Cni
-	n.Delegate["args"].(map[string]interface{})["cni"]=ipamargs
+
+	if hasKey(n.Delegate, "args") {
+		n.Delegate["args"].(map[string]interface{})["cni"]=ipamargs
+	} else {
+		n.Delegate["args"]=make(map[string]interface{})
+		n.Delegate["args"].(map[string]interface{})["cni"]=ipamargs
+	}
 
         if n.CNIVersion != "" {
                 n.Delegate["cniVersion"] = n.CNIVersion
