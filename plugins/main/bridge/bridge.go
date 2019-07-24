@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
-	"os"
 	"runtime"
 	"syscall"
 
@@ -415,9 +414,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 		// release IP in case of failure
 		defer func() {
 			if !success {
-				os.Setenv("CNI_COMMAND", "DEL")
 				ipam.ExecDel(n.IPAM.Type, args.StdinData)
-				os.Setenv("CNI_COMMAND", "ADD")
 			}
 		}()
 
@@ -520,7 +517,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 			chain := utils.FormatChainName(n.Name, args.ContainerID)
 			comment := utils.FormatComment(n.Name, args.ContainerID)
 			for _, ipc := range result.IPs {
-				if err = ip.SetupIPMasq(ip.Network(&ipc.Address), chain, comment); err != nil {
+				if err = ip.SetupIPMasq(&ipc.Address, chain, comment); err != nil {
 					return err
 				}
 			}

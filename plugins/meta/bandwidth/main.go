@@ -15,9 +15,7 @@
 package main
 
 import (
-	"crypto/sha1"
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/vishvananda/netlink"
@@ -28,8 +26,13 @@ import (
 	"github.com/containernetworking/cni/pkg/version"
 
 	"github.com/containernetworking/plugins/pkg/ip"
+	"github.com/containernetworking/plugins/pkg/ns"
+	"github.com/containernetworking/plugins/pkg/utils"
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 )
+
+const maxIfbDeviceLength = 15
+const ifbDevicePrefix = "bwp"
 
 // BandwidthEntry corresponds to a single entry in the bandwidth argument,
 // see CONVENTIONS.md
@@ -111,14 +114,8 @@ func validateRateAndBurst(rate int, burst int) error {
 	return nil
 }
 
-func getIfbDeviceName(networkName string, containerId string) (string, error) {
-	hash := sha1.New()
-	_, err := hash.Write([]byte(networkName + containerId))
-	if err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("%x", hash.Sum(nil))[:4], nil
+func getIfbDeviceName(networkName string, containerId string) string {
+	return utils.MustFormatHashWithPrefix(maxIfbDeviceLength, ifbDevicePrefix, networkName+containerId)
 }
 
 func getMTU(deviceName string) (int, error) {
@@ -130,21 +127,35 @@ func getMTU(deviceName string) (int, error) {
 	return link.Attrs().MTU, nil
 }
 
-func getHostInterface(interfaces []*current.Interface) (*current.Interface, error) {
+// get the veth peer of container interface in host namespace
+func getHostInterface(interfaces []*current.Interface, containerIfName string, netns ns.NetNS) (*current.Interface, error) {
 	if len(interfaces) == 0 {
-		return nil, errors.New("no interfaces provided")
+		return nil, fmt.Errorf("no interfaces provided")
 	}
 
+	// get veth peer index of container interface
+	var peerIndex int
 	var err error
+	_ = netns.Do(func(_ ns.NetNS) error {
+		_, peerIndex, err = ip.GetVethPeerIfindex(containerIfName)
+		return nil
+	})
+	if peerIndex <= 0 {
+		return nil, fmt.Errorf("container interface %s has no veth peer: %v", containerIfName, err)
+	}
+
+	// find host interface by index
+	link, err := netlink.LinkByIndex(peerIndex)
+	if err != nil {
+		return nil, fmt.Errorf("veth peer with index %d is not in host ns", peerIndex)
+	}
 	for _, iface := range interfaces {
-		if iface.Sandbox == "" { // host interface
-			_, _, err = ip.GetVethPeerIfindex(iface.Name)
-			if err == nil {
-				return iface, err
-			}
+		if iface.Sandbox == "" && iface.Name == link.Attrs().Name {
+			return iface, nil
 		}
 	}
-	return nil, errors.New(fmt.Sprintf("no host interface found. last error: %s", err))
+
+	return nil, fmt.Errorf("no veth peer of container interface found in host ns")
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
@@ -166,7 +177,14 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if err != nil {
 		return fmt.Errorf("could not convert result to current version: %v", err)
 	}
-	hostInterface, err := getHostInterface(result.Interfaces)
+
+	netns, err := ns.GetNS(args.Netns)
+	if err != nil {
+		return fmt.Errorf("failed to open netns %q: %v", netns, err)
+	}
+	defer netns.Close()
+
+	hostInterface, err := getHostInterface(result.Interfaces, args.IfName, netns)
 	if err != nil {
 		return err
 	}
@@ -184,10 +202,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 			return err
 		}
 
-		ifbDeviceName, err := getIfbDeviceName(conf.Name, args.ContainerID)
-		if err != nil {
-			return err
-		}
+		ifbDeviceName := getIfbDeviceName(conf.Name, args.ContainerID)
 
 		err = CreateIfb(ifbDeviceName, mtu)
 		if err != nil {
@@ -218,10 +233,7 @@ func cmdDel(args *skel.CmdArgs) error {
 		return err
 	}
 
-	ifbDeviceName, err := getIfbDeviceName(conf.Name, args.ContainerID)
-	if err != nil {
-		return err
-	}
+	ifbDeviceName := getIfbDeviceName(conf.Name, args.ContainerID)
 
 	if err := TeardownIfb(ifbDeviceName); err != nil {
 		return err
@@ -266,7 +278,13 @@ func cmdCheck(args *skel.CmdArgs) error {
 		return fmt.Errorf("could not convert result to current version: %v", err)
 	}
 
-	hostInterface, err := getHostInterface(result.Interfaces)
+	netns, err := ns.GetNS(args.Netns)
+	if err != nil {
+		return fmt.Errorf("failed to open netns %q: %v", netns, err)
+	}
+	defer netns.Close()
+
+	hostInterface, err := getHostInterface(result.Interfaces, args.IfName, netns)
 	if err != nil {
 		return err
 	}
@@ -316,10 +334,7 @@ func cmdCheck(args *skel.CmdArgs) error {
 		latency := latencyInUsec(latencyInMillis)
 		limitInBytes := limit(uint64(rateInBytes), latency, uint32(burstInBytes))
 
-		ifbDeviceName, err := getIfbDeviceName(bwConf.Name, args.ContainerID)
-		if err != nil {
-			return err
-		}
+		ifbDeviceName := getIfbDeviceName(bwConf.Name, args.ContainerID)
 
 		ifbDevice, err := netlink.LinkByName(ifbDeviceName)
 		if err != nil {
