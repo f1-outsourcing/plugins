@@ -30,7 +30,6 @@ import (
 	"github.com/containernetworking/cni/pkg/version"
 
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
-	"io/ioutil"
 )
 
 type NetConf struct {
@@ -132,9 +131,6 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if err != nil {
 		return err
 	}
-
-	//logging
-	ioutil.WriteFile("/tmp/mesos-debug-stdindata", args.StdinData, 0644)
 
         cniargs := CniArgs{}
 
