@@ -60,7 +60,7 @@ cni chained network configuration file. We use simple macvtap as an interface. M
     }
   },
   {
-    "type": "firewallnetns"
+    "type": "firewallnetns",
     "dataDir": "/etc/mesos-cni",
     "fwFiles": [ "default-policy", "allow-ping", "allow-ping-out" ],
     "ipsets": [
