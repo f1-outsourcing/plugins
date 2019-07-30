@@ -165,11 +165,13 @@ func cmdAdd(args *skel.CmdArgs) error {
 	items := m.Args.OrgApacheMesos.NetworkInfo.Labels.Labels
 	for _, item := range items {
 		if item.Key == "CNI_ARGS" {
-			// add loop for multiple args seperated by ,
-			s := strings.Split(item.Value,"=")
-			if s[0] == "IP" {
-				ip := net.ParseIP(s[1])
-				cniargs.Args.Cni.Ips=append(cniargs.Args.Cni.Ips, ip )
+			s := strings.Split(item.Value,";")
+			for _, element := range s {
+				v := strings.Split(element,"=")
+				if v[0] == "IP" {
+					ip := net.ParseIP(v[1])
+					cniargs.Args.Cni.Ips=append(cniargs.Args.Cni.Ips, ip )
+				}
 			}
 		}
 	}
