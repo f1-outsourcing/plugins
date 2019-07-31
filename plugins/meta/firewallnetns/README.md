@@ -11,6 +11,7 @@ To do's
 - Implement insert rules (now only appending works)
 - Load ipset lists
 - Save ipset lists on cmdDel??
+- Asked to kill task server / No kill ack received for instance
 
 
 ## Network configuration reference
