@@ -1,4 +1,4 @@
-# firewallnetns chain plugin (not final name)
+# firewallnetns chain plugin (not final name, does not work with mesos! they do not support cni spec 0.3.0!)
 
 ## Overview
 
@@ -151,6 +151,8 @@ This is how you can make your cni network configuration files more dynamic so on
 
 
 ## Use case mesos
+
+** does not work with mesos! because they only support cni spec 0.2.0 of jan 2017, so you will have to wait until they finally fully support 0.3.0 **
 
 The above example is more or less a proof of concept on how to apply 'dynamic' netfilter rules to a network namespace. In practice you will have to deal with the specifics of your container orchestration platform. Things you should consider are not blocking any health checks or executor connections.
 
