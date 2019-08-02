@@ -35,6 +35,8 @@ import (
 	"github.com/containernetworking/plugins/pkg/ns"
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 	"github.com/containernetworking/plugins/pkg/utils/sysctl"
+	
+	//"io/ioutil"
 )
 
 const (
@@ -48,6 +50,7 @@ type NetConf struct {
 	MTU    int    `json:"mtu"`
 	MAC    string `json:"mac"`
 	HostRouteIf string `json:"hostrouteif"`
+	HostRouteIP string `json:"hostrouteip"`
 }
 
 func init() {
@@ -96,7 +99,7 @@ func modeToString(mode netlink.MacvlanMode) (string, error) {
 
 func createMacvtap(conf *NetConf, ifName string, netns ns.NetNS) (*current.Interface, error) {
 	macvlan := &current.Interface{}
-
+	
 	mode, err := modeFromString(conf.Mode)
 	if err != nil {
 		return nil, err
@@ -259,6 +262,24 @@ func cmdAdd(args *skel.CmdArgs) error {
 				_ = arping.GratuitousArpOverIface(ipc.Address.IP, *contVeth)
 			}
 		}
+
+		//create the route from container to host
+		if n.HostRouteIP != "" {
+
+			//route for custom routing table
+			err := addContRoute(args.IfName, net.ParseIP(n.HostRouteIP))
+			if err != nil {
+				return fmt.Errorf("Failed to add container route %s %s: %v", args.IfName, n.HostRouteIP, err)
+			}
+
+	
+			//rule for custom routing table
+			err = addContRule(args.IfName, result.IPs[0].Address.IP.To4())
+			if err != nil {
+				return fmt.Errorf("Failed to add container rule %v", err)
+			}
+		}
+
 		return nil
 	})	
 	
@@ -267,32 +288,18 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
-	//f1 edit
 	//add route on host to macvtap
 	if n.HostRouteIf != "" {
 
-		hostlink, err := netlink.LinkByName(n.HostRouteIf)
+		//only first ip to route???
+		hostdst := result.IPs[0].Address.IP.To4()
+
+		err := addHostRoute(n.HostRouteIf, hostdst)
 		if err != nil {
 			return err
 		}
 	
-		//bring up interface
-		if err := netlink.LinkSetUp(hostlink); err != nil {
-			return err
-       		}
-
-		//only first ip to route???
-       		hostdst := &net.IPNet{
-			IP:   result.IPs[0].Address.IP.To4(),
-			Mask: net.CIDRMask(32, 32),
-       		}
-
-		hostroute := netlink.Route{LinkIndex: hostlink.Attrs().Index, Dst: hostdst}
-		if err := netlink.RouteAdd(&hostroute); err != nil {
-			return err
-        	}
 	}
-
 
 	result.DNS = n.DNS
 
@@ -319,37 +326,35 @@ func cmdDel(args *skel.CmdArgs) error {
 	// There is a netns so try to clean up. Delete can be called multiple times
 	// so don't return an error if the device is already removed.
 	err = ns.WithNetNSPath(args.Netns, func(_ ns.NetNS) error {
-		//f1 edit
+
 		//get the current ip
 		nslink, err := netlink.LinkByName(args.IfName)
 		if err != nil { return nil }
+
 		addrs, err := netlink.AddrList(nslink, netlink.FAMILY_V4)
 		if err != nil { return nil }
+
 		//global var??
 		dstip = addrs[0].IP
 
-		if err := ip.DelLinkByName(args.IfName); err != nil {
-			if err != ip.ErrLinkNotFound {
-				return err
-			}
+		if n.HostRouteIP != "" {
+			//delete custom routing table
+			delContRoute(args.IfName, dstip)
+
+			//delete rule for custom routing table
+			delContRule(args.IfName, dstip)
+		}
+
+		err = ip.DelLinkByName(args.IfName)
+		if err != nil {
+			if err != ip.ErrLinkNotFound { return err }
 		}
 		return nil
 	})
 
-	//f1 edit
 	//delete route on host to macvtap
 	if n.HostRouteIf != "" {
-		hostdst := &net.IPNet{
-			IP:   dstip,
-			Mask: net.CIDRMask(32, 32),
-		}
-
-		hostroute := netlink.Route{Dst: hostdst}
-
-		if err := netlink.RouteDel(&hostroute); err != nil {
-			return nil
-		}
-
+		delHostRoute(n.HostRouteIf, dstip)
 	}
 
 	return err
