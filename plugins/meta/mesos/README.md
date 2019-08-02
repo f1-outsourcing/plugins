@@ -9,7 +9,7 @@ We created the mesos delegate plugin to inject labels of org.apache.mesos to arg
 ###### marathon task json
 When we launch this task via marathon,
 
-```
+```json
 {
   "id": "/server",
   "user": "root",
@@ -21,16 +21,20 @@ When we launch this task via marathon,
   "acceptedResourceRoles": ["*"],
   "constraints": [["hostname","CLUSTER","m03.local"]],
   "backoffSeconds": 10,
-  "ipAddress": { "networkName": "test-delegate", "labels": {"CNI_ARGS": "IP=192.168.122.176"} },
+  "networks": [ { "mode": "container", "name": "test-delegate","labels": {"CNI_ARGS": "IP=192.168.122.176"} } ],
   "env": {"CNI_ARGS": "IP=192.168.122.172"},
   "labels": {"CNI_ARGS": "IP=192.168.122.174"}
 }
 ```
 
+One can also use this configuration syntax:
+"ipAddress": { "networkName": "test-delegate", "labels": {"CNI_ARGS": "IP=192.168.122.176"} },
+
+
 Apache mesos injects this runtime into cni network configuration. As you can see only the entry of CNI_ARGS that is in the ipAddress section is available.
 Standard cni plugins do not use this section of the configuration.
 
-```
+```json
 {
   "args": {
     "org.apache.mesos": {
@@ -59,7 +63,7 @@ Standard cni plugins do not use this section of the configuration.
 
 ###### cni network json
 This is our cni network configuration file. The above json will be injected in the cni network confiugration on the args level. The mesos plugin will get the labels and then insert them into the delegate section before delegating to macvtap.
-```
+```json
 {
   "name" : "test-delegate",
   "type" : "mesos",
@@ -92,7 +96,7 @@ This is our cni network configuration file. The above json will be injected in t
 
 Thus the macvtap will receive this configuration
 
-```
+```json
       "type": "macvtap",
       "master": "eth1",
       "hostrouteif": "macvtap0",
@@ -113,7 +117,7 @@ Thus the macvtap will receive this configuration
             ],
             "ips": ["192.168.122.176"]
           },
-    
+
       }
 ```
 
