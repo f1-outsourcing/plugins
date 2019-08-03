@@ -264,6 +264,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 		}
 
 		//create the route from container to host
+		/*
 		if n.HostRouteIP != "" {
 
 			//route for custom routing table
@@ -279,6 +280,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 				return fmt.Errorf("Failed to add container rule %v", err)
 			}
 		}
+		*/
 
 		return nil
 	})	
