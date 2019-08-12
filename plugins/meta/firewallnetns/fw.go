@@ -40,6 +40,25 @@ func loadFirewallFile(fwc *FirewallNetConf, fn string) error {
 	return err
 }
 
+
+func flushFirewall() {
+
+	ipt,_ := iptables.New()
+
+		
+	//maybe drop ipsets?
+
+	_ = ipt.ChangePolicy("filter", "INPUT", "ACCEPT")
+	_ = ipt.ChangePolicy("filter", "OUTPUT", "ACCEPT")
+	_ = ipt.ChangePolicy("filter", "FORWARD", "ACCEPT")
+
+	_ = ipt.ClearChain("filter", "INPUT")
+	_ = ipt.ClearChain("filter", "OUTPUT")
+	_ = ipt.ClearChain("filter", "FORWARD")
+
+
+}
+
 func applyFirewallFile(fwc *FirewallNetConf) error {
 
 	// process ipset lists

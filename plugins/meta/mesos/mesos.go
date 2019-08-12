@@ -23,27 +23,30 @@ import (
 	"fmt"
 	"net"
 	"strings"
+	"os"
+
+	//"os/exec"
+	//"syscall"
 	
 	"github.com/containernetworking/cni/pkg/invoke"
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
+	//"github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/cni/pkg/version"
+	"github.com/containernetworking/plugins/pkg/ns"
 
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 )
 
 type NetConf struct {
 	types.NetConf
+
 	Delegate   map[string]interface{} `json:"delegate"`
 }
 
 type CniArgs struct {
 	Args struct {
 		Cni IPAMArgs `json:"cni"`
-		//Cni struct {
-			//Ips []string `json:"ips"`
-			//Ips []net.IP `json:"ips"`
-		//} `json:"cni"`
 	} `json:"args"`
 }
 
@@ -100,6 +103,7 @@ func delegateAdd(cid, dataDir string, netconf map[string]interface{}) error {
 	}
 
 	return result.Print()
+	//return types.PrintResult(netconf.PrevResult, netconf.CNIVersion)
 }
 
 func delegateDel(cid, dataDir string, netconf map[string]interface{}) error {
@@ -164,6 +168,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 	//read the values of m and put them in cniargs
 	items := m.Args.OrgApacheMesos.NetworkInfo.Labels.Labels
 	for _, item := range items {
+
+		// modify args
 		if item.Key == "CNI_ARGS" {
 			s := strings.Split(item.Value,";")
 			for _, element := range s {
@@ -174,6 +180,37 @@ func cmdAdd(args *skel.CmdArgs) error {
 				}
 			}
 		}
+
+		//modify the netns
+		netns, err := ns.GetNS(args.Netns)
+		if err != nil {
+			return fmt.Errorf("failed to open netns %q: %v", netns, err)
+		}
+		defer netns.Close()
+
+		err = netns.Do(func(_ ns.NetNS) error {
+
+			if item.Key == "env" {
+				s := strings.Split(item.Value,"=")
+				os.Setenv(s[0], s[1])
+			}
+
+			if item.Key == "hostname" {
+				/*
+				cmd := exec.Command("hostname", item.Value)
+				err := cmd.Run()
+				if err != nil {
+					return fmt.Errorf("Cannot set hostname: %v", err)
+				}
+				if err := syscall.Sethostname([]byte(item.Value)); err != nil {
+					return fmt.Errorf("Sethostname: %v", err)
+				}
+				*/
+			}
+
+		return nil
+		})
+
 	}
 
 	ipamargs := IPAMArgs{}
@@ -184,6 +221,13 @@ func cmdAdd(args *skel.CmdArgs) error {
 	} else {
 		n.Delegate["args"]=make(map[string]interface{})
 		n.Delegate["args"].(map[string]interface{})["cni"]=ipamargs
+	}
+
+	if hasKey(n.Delegate, "prevResult") {
+		n.Delegate["prevResult"].(map[string]interface{})["prevResult"]=n.RawPrevResult
+	} else {
+		n.Delegate["prevResult"]=make(map[string]interface{})
+		n.Delegate["prevResult"].(map[string]interface{})["prevResult"]=n.RawPrevResult
 	}
 
         if n.CNIVersion != "" {
@@ -221,6 +265,24 @@ func main() {
 }
 
 func cmdCheck(args *skel.CmdArgs) error {
-	// TODO: implement
+
+        n, err := loadMesosNetConf(args.StdinData)
+        if err != nil {
+                return err
+        }
+
+
+        // Parse previous result.
+        if n.NetConf.RawPrevResult == nil {
+                return fmt.Errorf("Required prevResult missing")
+        }
+
+        if err := version.ParsePrevResult(&n.NetConf); err != nil {
+                return err
+        }
+
+
+
+
 	return nil
 }

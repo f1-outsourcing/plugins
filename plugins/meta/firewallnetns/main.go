@@ -75,19 +75,21 @@ func logtofile(data []byte) {
 }
 
 func parseConf(data []byte) (*FirewallNetConf, *current.Result, error) {
+	var result *current.Result
+	var err error
+
 	conf := FirewallNetConf{}
-	if err := json.Unmarshal(data, &conf); err != nil {
+
+	if err = json.Unmarshal(data, &conf); err != nil {
 		return nil, nil, fmt.Errorf("failed to load netconf: %v", err)
 	}
 
 	// Parse previous result.
 	if conf.RawPrevResult == nil {
-		return nil, nil, fmt.Errorf("missing prevResult from earlier plugin")
+		return &conf, result, nil 
 	}
 
 	// Parse previous result.
-	var result *current.Result
-	var err error
 	if err = version.ParsePrevResult(&conf.NetConf); err != nil {
 		return nil, nil, fmt.Errorf("could not parse prevResult: %v", err)
 	}
@@ -107,8 +109,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 	
-	logtofile([]byte(fmt.Sprintf("%#v\n",os.Environ())))
 	logtofile(args.StdinData)
+	logtofile([]byte(fmt.Sprintf("%#v\n",os.Environ())))
 
 	//#########################
 
@@ -129,6 +131,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 		}
 	
 		// now process the lines in the config	
+		err = applyFirewallFile(conf)
+		if err != nil {
+			return fmt.Errorf("Error processing rules %v", err)
+		}
 
 	return nil
 	})
@@ -142,15 +148,23 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if result == nil {
 		result = &current.Result{}
 	}
+
 	return types.PrintResult(result, conf.CNIVersion)
 }
 
 func cmdDel(args *skel.CmdArgs) error {
 
 	// Tolerate errors if the container namespace has been torn down already
-	containerNS, err := ns.GetNS(args.Netns)
+	netNS, err := ns.GetNS(args.Netns)
 	if err == nil {
-		defer containerNS.Close()
+		defer netNS.Close()
+
+		netNS.Do(func(_ ns.NetNS) error {
+
+		flushFirewall()
+
+		return nil
+		})
 	}
 
 	return nil
