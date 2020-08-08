@@ -25,20 +25,25 @@ import (
 
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
+	"github.com/containernetworking/plugins/pkg/ns"
 	types020 "github.com/containernetworking/cni/pkg/types/020"
 	"github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/cni/pkg/version"
 	bv "github.com/containernetworking/plugins/pkg/utils/buildversion"
 )
 
-type Net struct {
+type NetConf struct {
 	types.NetConf
 	Name       string      `json:"name"`
 	CNIVersion string      `json:"cniVersion"`
 	IPAM       *IPAMConfig `json:"ipam"`
-	RuntimeConfig struct {
-		IPs []string `json:"ips,omitempty"`
-	} `json:"runtimeConfig,omitempty"`
+	Args       struct {
+		       Cni IPAMArgs `json:"cni"`
+		   } `json:"args"`
+}
+
+type IPAMArgs struct {
+	Ips []net.IP `json:"ips"`
 }
 
 type IPAMConfig struct {
@@ -46,7 +51,7 @@ type IPAMConfig struct {
 	Type      string         `json:"type"`
 	Routes    []*types.Route `json:"routes"`
 	Addresses []Address      `json:"addresses,omitempty"`
-	DhcpIf    string         `json:"dhcpreqif"`
+	DhcpIf    string         `json:"dhcpif"`
 	ClientID  string         `json:"clientid"`
 	VendorID  string         `json:"vendorid"`
 	UserID    string         `json:"userid"`
@@ -75,46 +80,133 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
+	result := &current.Result{}
+	result.Routes = ipamConf.IPAM.Routes
+	result.DNS = ipamConf.DNS
+
+	if ipamConf.IPAM.DhcpIf == "" {
+		return fmt.Errorf("No dhcp interface to use specified")
+	}
+
+
+	if ipamConf.Args.Cni.Ips != nil {
+		cniip := net.IPNet{}
+		cniip.IP =  ipamConf.Args.Cni.Ips[0]
+		//get mask from args?
+		cniip.Mask = net.IPv4Mask(255, 255, 255, 0)
+		//get also route from args or from cni network config
+		result.IPs = append(result.IPs, &current.IPConfig{Version: "4" , Address: cniip })
+		return types.PrintResult(result, confVersion)
+	}
+
 	ms := []dhcpv4.Modifier{}
+	ms = append(ms, dhcpv4.WithRouter())
+	//ms = append(ms, dhcpv4.WithNetmask())
 
-	if ipamConf.VendorID != "" {
-		ms = append(ms, dhcpv4.WithOption(dhcpv4.OptClassIdentifier(ipamConf.VendorID)))
+	if ipamConf.IPAM.VendorID != "" {
+		ms = append(ms, dhcpv4.WithOption(dhcpv4.OptClassIdentifier(ipamConf.IPAM.VendorID)))
 	}
 
-	if ipamConf.UserID != "" {
-		ms = append(ms, dhcpv4.WithOption(dhcpv4.OptUserClass(ipamConf.UserID)))
+	if ipamConf.IPAM.UserID != "" {
+		ms = append(ms, dhcpv4.WithOption(dhcpv4.OptUserClass(ipamConf.IPAM.UserID)))
 	}
 
-	if ipamConf.ClientID != "" {
-		ms = append(ms, dhcpv4.WithOption(OptClientIdentifier(ipamConf.ClientID)))
+	if ipamConf.IPAM.ClientID != "" {
+		ms = append(ms, dhcpv4.WithOption(OptClientIdentifier(ipamConf.IPAM.ClientID)))
+	} else {
+		ms = append(ms, dhcpv4.WithOption(OptClientIdentifier(args.ContainerID+args.IfName)))
 	}
 
 	client := client4.NewClient()
-	p, err := exchangeDHCP(client, ipamConf.DhcpIf, ms)
+	p, err := exchangeDHCP(client, ipamConf.IPAM.DhcpIf, ms)
 	if err != nil {
-		return err
+		//try again
+		p, err = exchangeDHCP(client, ipamConf.IPAM.DhcpIf, ms)
+		if err != nil {
+			//try again
+			p, err = exchangeDHCP(client, ipamConf.IPAM.DhcpIf, ms)
+			if err != nil {
+				//try again
+				p, err = exchangeDHCP(client, ipamConf.IPAM.DhcpIf, ms)
+				if err != nil {
+					return err
+				}
+			}
+		}
 	}
+
 	if p.YourIPAddr.Equal(net.IPv4zero) {
 		return err
 	}
-
-	result := &current.Result{}
 
 	dhcpip := net.IPNet{}
 	dhcpip.IP =  p.YourIPAddr
 	dhcpip.Mask = p.SubnetMask() 
 
-	result.IPs = append(result.IPs, &current.IPConfig{Version: "4" , Address: dhcpip, Gateway: p.Router()[0]})
+
+	if len(p.Router())<=0 {
+		result.IPs = append(result.IPs, &current.IPConfig{Version: "4" , Address: dhcpip} )
+	} else {
+		defaultNet := &net.IPNet{}
+		defaultNet.IP = net.IPv4zero
+		defaultNet.Mask = net.IPMask(defaultNet.IP)
+
+		result.Routes = append(result.Routes, &types.Route{Dst: *defaultNet, GW: p.Router()[0]} )
+		result.IPs = append(result.IPs, &current.IPConfig{Version: "4" , Address: dhcpip, Gateway: p.Router()[0]} )
+	}
 
 	//cant get dns to work
-	//result.DNS = types.DNS{Nameservers: []string{"1.2.3.4", "1::cafe"} }
-	//dnsips := p.DNS()
-	//result.DNS = types.DNS{Nameservers: []string{dnsips[0].String()} }
-	
+	dnsips := make([]string,0)
+	for _, ip := range p.DNS() {
+		dnsips = append(dnsips, ip.String())
+	}	
+	for _, ip := range result.DNS.Nameservers {
+		dnsips = append(dnsips, ip)
+	}
+	result.DNS = types.DNS{Nameservers: dnsips }
+
 	return types.PrintResult(result, confVersion)
 }
 
 func cmdDel(args *skel.CmdArgs) error {
+	ipamConf, _, err := LoadIPAMConfig(args.StdinData, args.Args)
+	if err != nil {
+		return nil
+	}
+	//ioutil.WriteFile("/tmp/dhcpslim-debug1", []byte(fmt.Sprintf("%#v\n",ipamConf)), 0644)
+	client := client4.NewClient()
+
+
+	// getting the ip addresses of the netns interface
+	addresses := []net.Addr{} 
+
+	netns, err := ns.GetNS(args.Netns)
+	if err != nil {
+		return nil
+	}
+	defer netns.Close()
+	
+	err = netns.Do(func(_ ns.NetNS) error {
+	
+		intf, err := net.InterfaceByName(args.IfName)
+		if err != nil {
+			return nil
+		}		
+		addresses, err = intf.Addrs()
+
+		return nil
+	})
+
+	//releasing the ip addresses via the configured dhcp if
+	for _, addr := range addresses {
+		switch ip := addr.(type) {
+			case *net.IPNet:
+				_, err := client.Release(ipamConf.IPAM.DhcpIf, dhcpv4.WithClientIP(ip.IP))
+				if err != nil {
+					return nil
+				}		
+		}
+	}
 
 	return nil
 }
@@ -123,6 +215,9 @@ func cmdCheck(args *skel.CmdArgs) error {
 
 	return nil
 }
+
+
+
 
 func exchangeDHCP(c *client4.Client, dev string, modifiers []dhcpv4.Modifier) (*dhcpv4.DHCPv4, error) {
         ps, err := c.Exchange(dev, modifiers...)
@@ -162,18 +257,10 @@ func canonicalizeIP(ip *net.IP) error {
 	return fmt.Errorf("IP %s not v4 nor v6", *ip)
 }
 
-func LoadIPAMConfig(bytes []byte, envArgs string) (*IPAMConfig, string, error) {
-	n := Net{}
+func LoadIPAMConfig(bytes []byte, envArgs string) (*NetConf, string, error) {
+	n := &NetConf{}
 	if err := json.Unmarshal(bytes, &n); err != nil {
 		return nil, "", err
-	}
-
-	if len(n.RuntimeConfig.IPs) != 0 {
-		// args IP overwrites IP, so clear IPAM Config
-		n.IPAM.Addresses = make([]Address, 0, len(n.RuntimeConfig.IPs))
-		for _, addr := range n.RuntimeConfig.IPs {
-			n.IPAM.Addresses = append(n.IPAM.Addresses, Address{AddressStr: addr})
-		}
 	}
 
 	if n.IPAM == nil {
@@ -261,5 +348,5 @@ func LoadIPAMConfig(bytes []byte, envArgs string) (*IPAMConfig, string, error) {
 	// Copy net name into IPAM so not to drag Net struct around
 	n.IPAM.Name = n.Name
 
-	return n.IPAM, n.CNIVersion, nil
+	return n, n.CNIVersion, nil
 }
