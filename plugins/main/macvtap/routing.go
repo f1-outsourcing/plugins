@@ -17,7 +17,10 @@ package main
 import (
 	"fmt"
 	"net"
+
 	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
+	//"github.com/containernetworking/plugins/pkg/ns"
 
 )
 
@@ -41,7 +44,8 @@ func addHostRoute(ifName string, contip net.IP) error {
 	hostroute := netlink.Route{LinkIndex: hostlink.Attrs().Index, Dst: hostdst}
 
 	if err := netlink.RouteAdd(&hostroute); err != nil {
-		return fmt.Errorf("Failed to add host route %q: %v", ifName, err)
+		//return fmt.Errorf("Failed to add host route %q: %v", ifName, err)
+		return nil
        	}
 
 	return nil
@@ -87,8 +91,8 @@ func addContRoute(ifName string, hostip net.IP) error {
 
 	controute := netlink.Route{LinkIndex: contlink.Attrs().Index, Dst: hostdst}
 
-	//we need to use table 1
-	//ip route show table 1
+	//we need to use table 
+	//ip route show table 
 	controute.Table = contlink.Attrs().Index
 
 	if err := netlink.RouteAdd(&controute); err != nil {
@@ -98,24 +102,77 @@ func addContRoute(ifName string, hostip net.IP) error {
 	return nil
 }
 
-func addContRule(ifName string, hostip net.IP) error {
+func addContRules(ifidx int, hostip net.IP) error {
 
-	contlink, err := netlink.LinkByName(ifName)
+	contlink, err := netlink.LinkByIndex(ifidx)
 	if err != nil {
 		return err
 	}
 
+	contips, err := netlink.AddrList(contlink, unix.AF_INET)
+	// brrr
+	contip := contips[0].IPNet
+	
+
+	// get rules for priority and existence of main
+	rules,err := netlink.RuleList(unix.AF_INET) 
+
+	foundmain := false
+	lastprio := 100 
+	for _, nsrule := range rules {
+		if nsrule.Priority == 5 { foundmain = true }
+		if nsrule.Priority > 5 { 
+			lastprio = nsrule.Priority
+			break
+		}
+	}
+
+	// add ip rule from
+	// ip rule add from x.x.x.x(ifidx) table x
 	nsrule := netlink.NewRule()
 	
-       	contfrom := &net.IPNet{
-		IP:   hostip.To4(),
-		Mask: net.CIDRMask(32, 32),
-       	}
-	nsrule.Src = contfrom
+	nsrule.Priority = lastprio - 1 
+	nsrule.Src = contip
+	nsrule.Src.Mask = net.CIDRMask(32, 32)
+
 	nsrule.Table = contlink.Attrs().Index
 
 	if err := netlink.RuleAdd(nsrule); err != nil {
 		return fmt.Errorf("Failed to add rule nsrule:%v err:%v",nsrule,err)
+	}
+
+	// add ip rule to 
+	// ip rule add from all to 192.168.x.x table x
+	/*
+       	contfrom := &net.IPNet{
+		IP:   hostip.To4(),
+		Mask: net.CIDRMask(32, 32),
+       	}
+
+	nsrule = netlink.NewRule()
+	nsrule.Priority = lastprio - 2 
+	nsrule.Dst = contfrom
+	nsrule.Table = contlink.Attrs().Index
+
+	if err := netlink.RuleAdd(nsrule); err != nil {
+		return fmt.Errorf("Failed to add rule nsrule:%v err:%v",nsrule,err)
+	}
+	*/
+
+	// add rule to main with reserved 254
+	// ip rule add prio 5 from all table main
+	if foundmain != true { 	
+		nsrule = netlink.NewRule()
+		nsrule.Priority = 5 
+		nsrule.Table = unix.RT_TABLE_MAIN
+
+		// skip for now
+		//rules := netlink.RuleListFiltered(unix.AF_INET,nsrule,RT_FILTER_PRIORITY) 
+		/*
+		if err := netlink.RuleAdd(nsrule); err != nil {
+			return fmt.Errorf("Failed to add rule nsrule:%v err:%v",nsrule,err)
+		}
+		*/
 	}
 
 	return nil
@@ -168,11 +225,106 @@ func delContRoute(ifName string, hostip net.IP) error {
 	return nil
 }
 
+func MultipleLinks() ([]netlink.Link, error) {
+	rval := []netlink.Link{};
+
+	links, err := netlink.LinkList()
+	if err != nil {
+		return nil, err
+	}
+
+	for _,link := range links {
+		
+		if link.Attrs().EncapType == "ether" && link.Attrs().Flags&net.FlagUp != 0 {
+			rval = append(rval, link)
+		}
+	}
+
+	return rval, nil
+}
+
+func GetGwRoutes(links []netlink.Link) ([]netlink.Route, error) {
+	rval := []netlink.Route{}
+
+	for _, link := range links {
+		lnkroutes, _ := netlink.RouteList(link, netlink.FAMILY_V4)
+		for _, lnkroute := range lnkroutes {
+			if lnkroute.Gw != nil {
+				rval = append(rval, lnkroute)
+			}
+
+		}
+
+	}
+	
+	return rval, nil
+}
+
+func ReplaceGwRoutes(routes []netlink.Route) error {
+
+	for _, route := range routes {
+
+		rtroute := route
+
+		//adding routing table routes 
+		rtroute.Table = rtroute.LinkIndex
+		netlink.RouteAdd(&rtroute)
+
+		intf, err := net.InterfaceByIndex(rtroute.LinkIndex)
+		if err != nil {
+			return err
+		}
+
+		addresses, err := intf.Addrs()
+		for _, addr := range addresses {
+			switch ip := addr.(type) {
+				case *net.IPNet:
+					if ip.IP.DefaultMask() != nil { 
+
+						//adding routing table rules
+						addContRules(rtroute.LinkIndex, ip.IP)
+					}
+			}
+		}
+
+		//deleting the current default gw
+		netlink.RouteDel(&route)
+	}
+
+
+	return nil
+}
 
 /*
 func main() {
-        ipaddress :=  net.IP{13,13,13,13}	
-	addContRoute("tun1cnivtap", ipaddress )
+
+	fmt.Println("testtest ")
+
+	//test on networkns
+	netns, err := ns.GetNS("/run/netns/testing")
+	if err != nil {
+		fmt.Printf("failed to open netns %q: %v", "testing", err)
+	}
+	defer netns.Close()
+
+	err = netns.Do(func(_ ns.NetNS) error {
+	
+		links, err := MultipleLinks() 
+		if err != nil {
+			fmt.Printf("Failed to open links")
+		}
+
+		gwroutes, err := GetGwRoutes(links)
+
+		if len(links)>1 && len(gwroutes)>0 {
+			fmt.Printf("Found shit\n")
+			ReplaceGwRoutes(gwroutes)
+		}
+
+
+	// end netns
+	return nil
+	})
+
 }
 */
-

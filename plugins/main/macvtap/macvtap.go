@@ -222,6 +222,19 @@ func cmdAdd(args *skel.CmdArgs) error {
 		// All addresses apply to the container macvtap interface
 		ipc.Interface = current.Int(0)
 	}
+
+	//add route on host to macvtap
+	if n.HostRouteIf != "" {
+
+		//only first ip to route???
+		hostdst := result.IPs[0].Address.IP.To4()
+
+		err := addHostRoute(n.HostRouteIf, hostdst)
+		if err != nil {
+			return err
+		}
+	
+	}
 	
 	if n.MAC != "" {
 		err = netns.Do(func(_ ns.NetNS) error {
@@ -257,30 +270,43 @@ func cmdAdd(args *skel.CmdArgs) error {
 			return fmt.Errorf("failed to look up %q: %v", args.IfName, err)
 		}
 
+		//correct default gw route to routing table
+		/*
+		links, err := MultipleLinks()
+		if err != nil {
+			return fmt.Errorf("Failed to open links")
+		}
+		*/
+
+		//gwroutes, err := GetGwRoutes(links)
+
+		//if n.HostRouteIP != "" && len(links)>1 && len(gwroutes)>0 {
+		//put routing to host in custom routing table
+		if n.HostRouteIP != "" {
+
+			//route to agent in custom routing table
+			err := addContRoute(args.IfName, net.ParseIP(n.HostRouteIP))
+			if err != nil {
+				return fmt.Errorf("Failed to add container route %s %s: %v", args.IfName, n.HostRouteIP, err)
+			}
+			//add rules for custom routing table
+			err = addContRules(contVeth.Index, net.ParseIP(n.HostRouteIP))
+			if err != nil {
+				return fmt.Errorf("Failed to add container rules %s %s: %v", args.IfName, n.HostRouteIP, err)
+			}
+		}
+
+		/*
+		if len(links)>1 && len(gwroutes)>0 {
+			ReplaceGwRoutes(gwroutes)
+		}
+		*/
+
 		for _, ipc := range result.IPs {
 			if ipc.Version == "4" {
 				_ = arping.GratuitousArpOverIface(ipc.Address.IP, *contVeth)
 			}
 		}
-
-		//create the route from container to host
-		/*
-		if n.HostRouteIP != "" {
-
-			//route for custom routing table
-			err := addContRoute(args.IfName, net.ParseIP(n.HostRouteIP))
-			if err != nil {
-				return fmt.Errorf("Failed to add container route %s %s: %v", args.IfName, n.HostRouteIP, err)
-			}
-
-	
-			//rule for custom routing table
-			err = addContRule(args.IfName, result.IPs[0].Address.IP.To4())
-			if err != nil {
-				return fmt.Errorf("Failed to add container rule %v", err)
-			}
-		}
-		*/
 
 		return nil
 	})	
@@ -290,20 +316,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
-	//add route on host to macvtap
-	if n.HostRouteIf != "" {
 
-		//only first ip to route???
-		hostdst := result.IPs[0].Address.IP.To4()
-
-		err := addHostRoute(n.HostRouteIf, hostdst)
-		if err != nil {
-			return err
-		}
-	
-	}
-
-	result.DNS = n.DNS
+	//result.DNS = n.DNS
 
 	return types.PrintResult(result, cniVersion)
 }
@@ -351,6 +365,7 @@ func cmdDel(args *skel.CmdArgs) error {
 		if err != nil {
 			if err != ip.ErrLinkNotFound { return err }
 		}
+	
 		return nil
 	})
 
