@@ -24,6 +24,57 @@ import (
 
 )
 
+
+func FixContHostNet (hostip net.IP) error {
+
+	// not working??? fix!
+	//hostip[3] = 2
+	testip := net.IP{192, 168, 10, 2}
+
+	routes,_ := netlink.RouteGet(testip)
+
+	for _, route := range routes {
+
+		// add the container route
+		contlink,_ := netlink.LinkByIndex(route.LinkIndex)
+		err := addContRoute(contlink, hostip)
+		if err != nil {
+			return fmt.Errorf("Failed to add container route %s %s: %v", contlink, hostip, err)
+		}
+		// add the container rule
+		err = addContRules(contlink, hostip)
+		if err != nil {
+			return fmt.Errorf("Failed to add container route %s %s: %v", contlink, hostip, err)
+		}
+		
+		// remove the network route from table main
+		mvroute := netlink.Route{}
+		mvroute.LinkIndex =  route.LinkIndex
+		mvroute.Src = route.Src
+		mvroute.Dst = route.Dst 
+		mvroute.Scope = netlink.SCOPE_LINK
+		testip[3] = 0
+		mvroute.Dst= &net.IPNet{
+			IP:   testip.To4(),
+			Mask: net.CIDRMask(24, 32),
+      			}
+
+		err = netlink.RouteDel(&mvroute)
+		if err != nil {
+			return err
+		}
+
+		// put the network route back in table default
+		mvroute.Table = unix.RT_TABLE_DEFAULT
+		err = netlink.RouteAdd(&mvroute)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+} 
+
 func addHostRoute(ifName string, contip net.IP) error {
 
 	hostlink, err := netlink.LinkByName(ifName)
@@ -72,12 +123,8 @@ func delHostRoute(ifName string, contip net.IP) error {
 	return nil	
 }
 
-func addContRoute(ifName string, hostip net.IP) error {
+func addContRoute(contlink netlink.Link, hostip net.IP) error {
 
-	contlink, err := netlink.LinkByName(ifName)
-	if err != nil {
-		return err
-	}
 
 	//bring up interface
 	if err := netlink.LinkSetUp(contlink); err != nil {
@@ -96,26 +143,35 @@ func addContRoute(ifName string, hostip net.IP) error {
 	controute.Table = contlink.Attrs().Index
 
 	if err := netlink.RouteAdd(&controute); err != nil {
-		return fmt.Errorf("Failed to add container route %s %q: %v", ifName, hostip,err)
+		return fmt.Errorf("Failed to add container route %s %q: %v", contlink, hostip,err)
        	}
+
+	//we need to such a route in the table default
+        //but it needs to be having the gateway if, if there is a gateway
+	controute.Table = unix.RT_TABLE_DEFAULT
+
+	if HasGwRoute(contlink) {
+		if err := netlink.RouteReplace(&controute); err != nil {
+			return fmt.Errorf("Failed to add container route %s %q: %v", contlink, hostip,err)
+      	 	}
+	} else {
+		// we do not want to change a route made for the gateway interface
+		netlink.RouteAdd(&controute)
+
+	}
 
 	return nil
 }
 
-func addContRules(ifidx int, hostip net.IP) error {
+func addContRules(contlink netlink.Link, hostip net.IP) error {
 
-	contlink, err := netlink.LinkByIndex(ifidx)
-	if err != nil {
-		return err
-	}
-
-	contips, err := netlink.AddrList(contlink, unix.AF_INET)
+	contips,_ := netlink.AddrList(contlink, unix.AF_INET)
 	// brrr
 	contip := contips[0].IPNet
 	
 
 	// get rules for priority and existence of main
-	rules,err := netlink.RuleList(unix.AF_INET) 
+	rules,_ := netlink.RuleList(unix.AF_INET) 
 
 	foundmain := false
 	lastprio := 100 
@@ -168,11 +224,9 @@ func addContRules(ifidx int, hostip net.IP) error {
 
 		// skip for now
 		//rules := netlink.RuleListFiltered(unix.AF_INET,nsrule,RT_FILTER_PRIORITY) 
-		/*
 		if err := netlink.RuleAdd(nsrule); err != nil {
 			return fmt.Errorf("Failed to add rule nsrule:%v err:%v",nsrule,err)
 		}
-		*/
 	}
 
 	return nil
@@ -260,16 +314,33 @@ func GetGwRoutes(links []netlink.Link) ([]netlink.Route, error) {
 	return rval, nil
 }
 
-func ReplaceGwRoutes(routes []netlink.Route) error {
+func HasGwRoute(link netlink.Link) (bool) {
+	rval := false
+	lnkroutes, _ := netlink.RouteList(link, netlink.FAMILY_V4)
+	for _, lnkroute := range lnkroutes {
+		if lnkroute.Gw != nil {
+			rval = true
+		}
+	}
+	return rval
+}
+
+
+func ReplaceGwRoutes(routes []netlink.Route, hostip net.IP) error {
 
 	for _, route := range routes {
 
 		rtroute := route
 
 		//adding routing table routes 
-		rtroute.Table = rtroute.LinkIndex
-		netlink.RouteAdd(&rtroute)
+		//rtroute.Table = rtroute.LinkIndex
+		rtroute.Table = unix.RT_TABLE_DEFAULT
+		err := netlink.RouteAdd(&rtroute)
+		if err != nil {
+			return err
+		}
 
+		/*
 		intf, err := net.InterfaceByIndex(rtroute.LinkIndex)
 		if err != nil {
 			return err
@@ -286,9 +357,14 @@ func ReplaceGwRoutes(routes []netlink.Route) error {
 					}
 			}
 		}
+		*/
 
 		//deleting the current default gw
-		netlink.RouteDel(&route)
+		err = netlink.RouteDel(&route)
+		if err != nil {
+			return err
+		}
+
 	}
 
 

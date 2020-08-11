@@ -271,36 +271,36 @@ func cmdAdd(args *skel.CmdArgs) error {
 		}
 
 		//correct default gw route to routing table
-		/*
 		links, err := MultipleLinks()
 		if err != nil {
 			return fmt.Errorf("Failed to open links")
 		}
-		*/
 
-		//gwroutes, err := GetGwRoutes(links)
+		gwroutes, err := GetGwRoutes(links)
 
 		//if n.HostRouteIP != "" && len(links)>1 && len(gwroutes)>0 {
 		//put routing to host in custom routing table
 		if n.HostRouteIP != "" {
 
 			//route to agent in custom routing table
-			err := addContRoute(args.IfName, net.ParseIP(n.HostRouteIP))
+			contlink,_ := netlink.LinkByName(args.IfName)
+			err := addContRoute(contlink, net.ParseIP(n.HostRouteIP))
 			if err != nil {
 				return fmt.Errorf("Failed to add container route %s %s: %v", args.IfName, n.HostRouteIP, err)
 			}
 			//add rules for custom routing table
-			err = addContRules(contVeth.Index, net.ParseIP(n.HostRouteIP))
+			err = addContRules(contlink, net.ParseIP(n.HostRouteIP))
 			if err != nil {
 				return fmt.Errorf("Failed to add container rules %s %s: %v", args.IfName, n.HostRouteIP, err)
 			}
+
+			//check if there exists a network in the same range as the host
+			FixContHostNet(net.ParseIP(n.HostRouteIP))
 		}
 
-		/*
-		if len(links)>1 && len(gwroutes)>0 {
-			ReplaceGwRoutes(gwroutes)
+		if len(gwroutes)>0 {
+			ReplaceGwRoutes(gwroutes, net.ParseIP(n.HostRouteIP))
 		}
-		*/
 
 		for _, ipc := range result.IPs {
 			if ipc.Version == "4" {
