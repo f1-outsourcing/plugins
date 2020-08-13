@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"runtime"
+	"time"
 
 	"github.com/j-keck/arping"
 	"github.com/vishvananda/netlink"
@@ -171,6 +173,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if err != nil {
 		return err
 	}
+
+	wait,_ := strconv.Atoi( args.IfName[len(args.IfName)-1:] )
+	wait = ( wait + 1 ) * 200
+	time.Sleep(time.Duration(wait) * time.Millisecond)
 
 	netns, err := ns.GetNS(args.Netns)
 	if err != nil {
