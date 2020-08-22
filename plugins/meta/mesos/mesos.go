@@ -25,9 +25,6 @@ import (
 	"strings"
 	"os"
 
-	//"os/exec"
-	//"syscall"
-	
 	"github.com/containernetworking/cni/pkg/invoke"
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
@@ -52,6 +49,7 @@ type CniArgs struct {
 
 type IPAMArgs struct {
 	Ips []net.IP `json:"ips"`
+	Subnet *net.IPNet `json:"subnet"`
 }
 
 type MesosArgs struct {
@@ -96,7 +94,7 @@ func delegateAdd(cid, dataDir string, netconf map[string]interface{}) error {
 	if err != nil {
 		return fmt.Errorf("error serializing delegate netconf: %v", err)
 	}
-
+	
 	result, err := invoke.DelegateAdd(context.TODO(), netconf["type"].(string), netconfBytes, nil)
 	if err != nil {
 		return err
@@ -143,6 +141,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if err != nil {
 		return err
 	}
+
 	bla, err := json.Marshal(m)
 	
 	if n.Delegate == nil {
@@ -166,6 +165,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	//read the values of m and put them in cniargs
+	//or ipam
 	items := m.Args.OrgApacheMesos.NetworkInfo.Labels.Labels
 	for _, item := range items {
 
@@ -175,10 +175,49 @@ func cmdAdd(args *skel.CmdArgs) error {
 			for _, element := range s {
 				v := strings.Split(element,"=")
 				if v[0] == "IP" {
-					ip := net.ParseIP(v[1])
-					cniargs.Args.Cni.Ips=append(cniargs.Args.Cni.Ips, ip )
+					ip,net,_ := net.ParseCIDR(v[1])
+					
+					cniargs.Args.Cni.Ips=append(cniargs.Args.Cni.Ips, ip)
+					cniargs.Args.Cni.Subnet=net
 				}
 			}
+		}
+
+		//modify ipam args
+		if item.Key == "vendorid" {
+			if hasKey(n.Delegate, "ipam") {
+				if hasKey(n.Delegate["ipam"].(map[string]interface{}), "vendorid") {
+					n.Delegate["ipam"].(map[string]interface{})["vendorid"] = item.Value
+				} else {
+					//create the key
+					n.Delegate["ipam"].(map[string]interface{})["vendorid"] = make(map[string]interface{})
+					n.Delegate["ipam"].(map[string]interface{})["vendorid"] = item.Value
+				}
+			}	
+		}
+
+		if item.Key == "userid" {
+			if hasKey(n.Delegate, "ipam") {
+				if hasKey(n.Delegate["ipam"].(map[string]interface{}), "userid") {
+					n.Delegate["ipam"].(map[string]interface{})["userid"] = item.Value
+				} else {
+					//create the key
+					n.Delegate["ipam"].(map[string]interface{})["userid"] = make(map[string]interface{})
+					n.Delegate["ipam"].(map[string]interface{})["userid"] = item.Value
+				}
+			}	
+		}
+
+		if item.Key == "clientid" {
+			if hasKey(n.Delegate, "ipam") {
+				if hasKey(n.Delegate["ipam"].(map[string]interface{}), "clientid") {
+					n.Delegate["ipam"].(map[string]interface{})["clientid"] = item.Value
+				} else {
+					//create the key
+					n.Delegate["ipam"].(map[string]interface{})["clientid"] = make(map[string]interface{})
+					n.Delegate["ipam"].(map[string]interface{})["clientid"] = item.Value
+				}
+			}	
 		}
 
 		//modify the netns

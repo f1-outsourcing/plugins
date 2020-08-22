@@ -44,6 +44,7 @@ type NetConf struct {
 
 type IPAMArgs struct {
 	Ips []net.IP `json:"ips"`
+	Subnet *net.IPNet `json:"subnet"`
 }
 
 type IPAMConfig struct {
@@ -88,12 +89,14 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return fmt.Errorf("No dhcp interface to use specified")
 	}
 
-
 	if ipamConf.Args.Cni.Ips != nil {
 		cniip := net.IPNet{}
 		cniip.IP =  ipamConf.Args.Cni.Ips[0]
 		//get mask from args?
-		cniip.Mask = net.IPv4Mask(255, 255, 255, 0)
+		//cniip.Mask = net.IPv4Mask(255, 255, 255, 0)
+		if ipamConf.Args.Cni.Subnet != nil {
+			cniip.Mask = ipamConf.Args.Cni.Subnet.Mask
+		}
 		//get also route from args or from cni network config
 		result.IPs = append(result.IPs, &current.IPConfig{Version: "4" , Address: cniip })
 		return types.PrintResult(result, confVersion)
@@ -173,7 +176,7 @@ func cmdDel(args *skel.CmdArgs) error {
 	if err != nil {
 		return nil
 	}
-	//ioutil.WriteFile("/tmp/dhcpslim-debug1", []byte(fmt.Sprintf("%#v\n",ipamConf)), 0644)
+
 	client := client4.NewClient()
 
 
